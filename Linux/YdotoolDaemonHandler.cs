@@ -3,9 +3,9 @@ using CliWrap;
 
 namespace HostInputHandler.Linux;
 
-class YdotoolHandler : IDisposable
+class YdotoolDaemonHandler : IDisposable
 {
-    private YdotoolHandler()
+    private YdotoolDaemonHandler()
     {
         StringBuilder commandResult = new StringBuilder();
 
@@ -45,18 +45,18 @@ class YdotoolHandler : IDisposable
         _ydotoolDaemonTask = LaunchYdotoolDaemon();
     }
 
-    private static volatile YdotoolHandler? _instance;
+    private static volatile YdotoolDaemonHandler? _instance;
 
     private static readonly Lock Lock = new Lock();
 
-    public static YdotoolHandler GetInstance()
+    public static YdotoolDaemonHandler GetInstance()
     {
         if (_instance != null) return _instance;
         lock (Lock)
         {
             if (_instance == null)
             {
-                _instance = new YdotoolHandler();
+                _instance = new YdotoolDaemonHandler();
             }
         }
 
@@ -70,12 +70,22 @@ class YdotoolHandler : IDisposable
         _instance = null;
     }
 
-    public bool IsDaemonRunning { get; set; }
-    
+    public bool IsDaemonRunning => CheckDaemon();
+
+    private bool CheckDaemon()
+    {
+        var cmd = Cli.Wrap("ydotool")
+            .WithArguments("type -h")
+            .WithValidation(CommandResultValidation.None)
+            .ExecuteAsync().GetAwaiter().GetResult();
+        
+        return cmd.IsSuccess;
+    }
+
     private (string username, uint groupid, uint userid) _userInfo;
-    private CommandTask<CommandResult>? _ydotoolDaemonTask;
-    private CancellationTokenSource? _cts;
-    
+    private CommandTask<CommandResult> _ydotoolDaemonTask;
+    private CancellationTokenSource _cts;
+
     CommandTask<CommandResult> LaunchYdotoolDaemon()
     {
         //ydotoold -p /run/user/{uid}/.ydotool_socket -o {uid}:{gid}
@@ -85,33 +95,20 @@ class YdotoolHandler : IDisposable
             .WithArguments(
                 $"ydotoold -p /run/user/{uid}/.ydotool_socket -o {uid}:{gid}"
             )
+            .WithValidation(CommandResultValidation.None)
             .ExecuteAsync(_cts.Token);
 
 
-        while (DidSocketSart(uid) == false)
+        while (CheckDaemon() == false)
         {
             Thread.Sleep(500);
             Console.WriteLine("Waiting for ydotool socket...");
         }
 
-        //Console.WriteLine("Press any key when you have typed you password.");
-        //Console.ReadKey(false);
-        
-        IsDaemonRunning = true;
         Console.WriteLine($"pid: {task.ProcessId}");
-        //task.GetAwaiter().GetResult();
+
 
         return task;
-
-        bool DidSocketSart(uint uid)
-        {
-            var cmd = Cli.Wrap("ls")
-                .WithArguments($"/run/user/{uid}/.ydotool_socket")
-                .WithValidation(CommandResultValidation.None)
-                .WithStandardOutputPipe(PipeTarget.ToStream(Stream.Null))
-                .ExecuteAsync().GetAwaiter().GetResult();
-            return cmd.IsSuccess;
-        }
     }
 
     void StopYdotoolDaemon()
@@ -141,7 +138,6 @@ class YdotoolHandler : IDisposable
                     .ExecuteAsync().GetAwaiter().GetResult();
             }
         }
-        IsDaemonRunning = false;
     }
 
     uint GetUserId(string commandResult)

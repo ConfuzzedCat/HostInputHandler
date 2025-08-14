@@ -78,4 +78,47 @@ public static class KeyCodeConverter
     {
         return WindowsToLinux.TryGetValue(vkCode, out var linuxKey) ? linuxKey : -1;
     }
+    
+    /// <summary>
+    /// Converts a character to a Linux evdev keycode.
+    /// Returns -1 if the character is not mapped.
+    /// </summary>
+    public static int CharToLinuxKey(char c)
+    {
+        c = char.ToUpperInvariant(c);
+        int vk = c;
+        return WindowsToLinux.TryGetValue(vk, out var linuxKey) ? linuxKey : -1;
+    }
+
+    /// <summary>
+    /// Converts a character to a Windows Virtual Key code.
+    /// Returns -1 if the character is not mapped.
+    /// </summary>
+    public static int CharToVK(char c)
+    {
+        c = char.ToUpperInvariant(c);
+        return c;
+    }
+
+    /// <summary>
+    /// Converts a Linux evdev keycode to its character representation.
+    /// Returns '\0' if the key is not mapped or not a printable character.
+    /// </summary>
+    public static char LinuxKeyToChar(int linuxKeyCode)
+    {
+        if (LinuxToWindows.TryGetValue(linuxKeyCode, out var vk) && vk >= 0x20 && vk <= 0x7E)
+            return (char)vk;
+        return '\0';
+    }
+
+    /// <summary>
+    /// Converts a Windows Virtual Key code to its character representation.
+    /// Returns '\0' if the VK is not a printable character.
+    /// </summary>
+    public static char VKToChar(int vkCode)
+    {
+        if (vkCode >= 0x20 && vkCode <= 0x7E)
+            return (char)vkCode;
+        return '\0';
+    }
 }

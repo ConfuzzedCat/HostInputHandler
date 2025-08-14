@@ -8,11 +8,8 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <Folder Include="Windows\" />
-    </ItemGroup>
-
-    <ItemGroup>
       <PackageReference Include="CliWrap" Version="3.9.0" />
+      <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
     </ItemGroup>
 
 </Project>
