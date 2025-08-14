@@ -8,7 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <Folder Include="WindowsImpl\" />
+      <Folder Include="Windows\" />
     </ItemGroup>
 
     <ItemGroup>

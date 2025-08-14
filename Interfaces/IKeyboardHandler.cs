@@ -1,15 +1,9 @@
+using HostInputHandler.Enums;
+
 namespace HostInputHandler.Interfaces;
 
-public interface IKeyboardHandler : IDisposable
+public interface IKeyboardHandler<in T> where T : Enum
 {
-    bool Initialize();
-    void Shutdown();
-
     bool Type(string value, uint delay = 0);
-    bool Press(byte[] keys, uint duration = 0, uint delay = 0);
-
-    void IDisposable.Dispose()
-    {
-        Shutdown();
-    }
+    bool Press(T key, uint duration = 0, uint delay = 0);
 }

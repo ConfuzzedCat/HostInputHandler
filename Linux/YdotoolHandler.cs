@@ -1,47 +1,12 @@
-using System.Diagnostics;
 using System.Text;
 using CliWrap;
-using CliWrap.EventStream;
-using HostInputHandler.Interfaces;
 
-namespace HostInputHandler.LinuxImpl;
+namespace HostInputHandler.Linux;
 
-// This Singleton implementation uses double-check locking to ensure thread-safe lazy initialization.
-public sealed class KeyboardHandler : IKeyboardHandler
+class YdotoolHandler : IDisposable
 {
-    private KeyboardHandler()
+    private YdotoolHandler()
     {
-        Initialize();
-    }
-
-    private static KeyboardHandler? _instance;
-
-    // Synchronization object for thread safety.
-    private static readonly Lock Lock = new Lock();
-
-    public static KeyboardHandler GetInstance()
-    {
-        if (_instance != null) return _instance;
-        lock (Lock)
-        {
-            _instance ??= new KeyboardHandler();
-        }
-
-        return _instance;
-    }
-
-    private (string username, uint groupid, uint userid) _userInfo;
-    private CommandTask<CommandResult> _ydotoolDaemonTask;
-    private CancellationTokenSource _cts;
-    private bool _isDaemonRunning;
-
-    public bool Initialize()
-    {
-        if (_instance is not null)
-        {
-            return false;
-        }
-        
         StringBuilder commandResult = new StringBuilder();
 
         var command = Cli.Wrap("id")
@@ -52,11 +17,12 @@ public sealed class KeyboardHandler : IKeyboardHandler
         {
             throw new Exception("Failed to get id of user.");
         }
+
         _userInfo = (
-            GetUsername(commandResult.ToString()), 
-            GetGroupId(commandResult.ToString()), 
+            GetUsername(commandResult.ToString()),
+            GetGroupId(commandResult.ToString()),
             GetUserId(commandResult.ToString())
-            );
+        );
 
         command = Cli.Wrap("pkexec")
             .WithArguments("--version")
@@ -65,6 +31,7 @@ public sealed class KeyboardHandler : IKeyboardHandler
         {
             throw new Exception("Failed to get version of pkexec. Is pkexec installed?");
         }
+
         command = Cli.Wrap("ydotoold")
             .WithArguments("--version")
             .ExecuteAsync().GetAwaiter().GetResult();
@@ -72,54 +39,43 @@ public sealed class KeyboardHandler : IKeyboardHandler
         {
             throw new Exception("Failed to get version of ydotoold. Is ydotool installed?");
         }
-        
+
         _cts = new CancellationTokenSource();
 
         _ydotoolDaemonTask = LaunchYdotoolDaemon();
-        
-        return true;
     }
 
-    public void Shutdown()
-    {
-        if (_instance is null)
-        {
-            return;
-        }
-        StopYdotoolDaemon();
-    }
+    private static volatile YdotoolHandler? _instance;
 
-    public bool Type(string value, uint delay = 0)
+    private static readonly Lock Lock = new Lock();
+
+    public static YdotoolHandler GetInstance()
     {
-        if (_isDaemonRunning == false)
+        if (_instance != null) return _instance;
+        lock (Lock)
         {
-            throw new Exception("You are not running ydotool.");
+            if (_instance == null)
+            {
+                _instance = new YdotoolHandler();
+            }
         }
 
-        value = value.Replace("'", "");
-        value = value.Replace("\"", "");
-
-        Console.WriteLine($"Typing: {value}");
-        var result = new StringBuilder();
-        
-        Thread.Sleep((int)delay);
-        
-        var cmd = Cli.Wrap("ydotool")
-            .WithArguments($"type {value}")
-            .WithValidation(CommandResultValidation.None)
-            .WithStandardOutputPipe(PipeTarget.ToStringBuilder(result))
-            .ExecuteAsync().GetAwaiter().GetResult();
-
-        Console.WriteLine($"result: {result} - {cmd.IsSuccess}");
-        return cmd.IsSuccess;
+        return _instance;
     }
 
-    public bool Press(byte[] keys, uint duration = 0, uint delay = 0)
+    public static void Shutdown()
     {
-        Thread.Sleep((int)delay);
-        throw new NotImplementedException();
+        if(_instance == null) return;
+        _instance.Dispose();
+        _instance = null;
     }
 
+    public bool IsDaemonRunning { get; set; }
+    
+    private (string username, uint groupid, uint userid) _userInfo;
+    private CommandTask<CommandResult>? _ydotoolDaemonTask;
+    private CancellationTokenSource? _cts;
+    
     CommandTask<CommandResult> LaunchYdotoolDaemon()
     {
         //ydotoold -p /run/user/{uid}/.ydotool_socket -o {uid}:{gid}
@@ -127,20 +83,35 @@ public sealed class KeyboardHandler : IKeyboardHandler
         uint gid = _userInfo.groupid;
         var task = Cli.Wrap("pkexec")
             .WithArguments(
-                $"ydotoold -p /run/user/{uid}/.ydotool_socket -o {uid}:{gid}; sleep 5; rm /run/user/{uid}/.ydotool_socket"
+                $"ydotoold -p /run/user/{uid}/.ydotool_socket -o {uid}:{gid}"
             )
             .ExecuteAsync(_cts.Token);
-        // 
-        //int msToWaitForPassword = 10000;
-        //Thread.Sleep(msToWaitForPassword);
-        Console.WriteLine("Press any key when you have typed you password.");
-        Console.ReadKey(false);
+
+
+        while (DidSocketSart(uid) == false)
+        {
+            Thread.Sleep(500);
+            Console.WriteLine("Waiting for ydotool socket...");
+        }
+
+        //Console.WriteLine("Press any key when you have typed you password.");
+        //Console.ReadKey(false);
         
-        _isDaemonRunning = true;
+        IsDaemonRunning = true;
         Console.WriteLine($"pid: {task.ProcessId}");
         //task.GetAwaiter().GetResult();
 
         return task;
+
+        bool DidSocketSart(uint uid)
+        {
+            var cmd = Cli.Wrap("ls")
+                .WithArguments($"/run/user/{uid}/.ydotool_socket")
+                .WithValidation(CommandResultValidation.None)
+                .WithStandardOutputPipe(PipeTarget.ToStream(Stream.Null))
+                .ExecuteAsync().GetAwaiter().GetResult();
+            return cmd.IsSuccess;
+        }
     }
 
     void StopYdotoolDaemon()
@@ -153,6 +124,8 @@ public sealed class KeyboardHandler : IKeyboardHandler
             {
                 throw new Exception("Failed to stop ydotool daemon.");
             }
+
+
         }
         catch (OperationCanceledException e)
         {
@@ -161,8 +134,14 @@ public sealed class KeyboardHandler : IKeyboardHandler
         finally
         {
             _cts.Dispose();
+            {
+                var uid = _userInfo.userid;
+                Cli.Wrap("rm")
+                    .WithArguments($"/run/user/{uid}/.ydotool_socket")
+                    .ExecuteAsync().GetAwaiter().GetResult();
+            }
         }
-        _isDaemonRunning = false;
+        IsDaemonRunning = false;
     }
 
     uint GetUserId(string commandResult)
@@ -193,5 +172,12 @@ public sealed class KeyboardHandler : IKeyboardHandler
         var startIndex = commandResult.IndexOf('(') + 1;
         var len = commandResult.IndexOf(')') - startIndex;
         return commandResult.Substring(startIndex, len);
+    }
+
+
+    public void Dispose()
+    {
+        StopYdotoolDaemon();
+        _instance = null;
     }
 }
